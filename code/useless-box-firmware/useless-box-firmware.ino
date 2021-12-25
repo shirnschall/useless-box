@@ -1,6 +1,6 @@
 #include <Servo.h>
 
-#define NUM_SWITCHEs 5
+#define NUM_SWITCHES 5
 
 Servo* servos[2];
 short servoPins[] = {9,10};
@@ -10,7 +10,7 @@ short switchPinsc = 5;
 short endStopPin = 13;
 
 short switchesState[NUM_SWITCHES]={0,0,0,0,0};
-unsigned int switchesPos = {10,20,30,40,50};
+unsigned int switchesPos[NUM_SWITCHES] = {10,20,30,40,50};
 
 short homed = 0;
 
