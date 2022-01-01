@@ -8,9 +8,17 @@
 
 #include <Servo.h>
 
+//misc
+#define TIME_TO_SHUTDOWN_IN_MS 30000 //30s
+#define DELAY_BETWEEN_LOOP_RUNS_IN_MS 100
+
+
 #define TOP_POS 30
 #define STANDBY_POS 90
 #define OFF_POS 140
+
+#define OPEN_POS 75
+#define CLOSED_POS 20
 
 
 //stepper settings
@@ -18,34 +26,34 @@
 #define STEPS_PER_REV 200
 #define MICRO_STEPPING 16
 #define HOMEING_MOVEMENTS 1
-#define DIR_PIN 11
-#define STEP_PIN 10
-#define MS1_PIN 9
-#define MS2_PIN 8
-#define MS3_PIN 7
-#define ENABLE_PIN 6
-#define MIN_POS -1070
+#define DIR_PIN 10
+#define STEP_PIN 11
+#define MS1_PIN 7
+#define MS2_PIN 6
+#define MS3_PIN 9
+#define ENABLE_PIN 8
+#define MIN_POS -1200
 #define MAX_POS 0
 
 //switches
-#define SW1_PIN A1
-#define SW2_PIN A2
-#define SW3_PIN 2
-#define SW4_PIN 4
-#define SW5_PIN 12
-#define SW6_PIN 13
+#define SW1_PIN 2
+#define SW2_PIN 4
+#define SW3_PIN 12
+#define SW4_PIN 13
+#define SW5_PIN A0
+#define SW6_PIN A1
 #define NUM_SWITCHES 6
 //#define QUEUE_SIZE 7  //NUM_SWITCHES+1
 
 //servos
 //PWM pins
-#define SERVO1_PIN 3
-#define SERVO2_PIN 5
+#define SERVO1_PIN 5
+#define SERVO2_PIN 3
 #define NUM_SERVOS 2
 #define SERVO_DELAY 250
 
 //endstop
-#define ENDSTOP_PIN A0
+#define ENDSTOP_PIN A2
 
 
 A4988 stepper(STEPS_PER_REV, DIR_PIN, STEP_PIN, MS1_PIN, MS2_PIN, MS3_PIN);
@@ -56,19 +64,20 @@ short servoPins[] = {SERVO1_PIN,SERVO2_PIN};
 short switchPins[] = {SW1_PIN,SW2_PIN,SW3_PIN,SW4_PIN,SW5_PIN,SW6_PIN};
 
 short switchesState[]={0,0,0,0,0,0};
-unsigned int switchesPos[] = {-1070,-856,-642,-428,-214,0};
+unsigned int switchesPos[] = {-1200,-960,-720,-480,-240,0};
 
 short isHomed = 0;
 int currentPos = 0;
 short isClosed = 1;
 short isStandby = 0;
 short isExtended = 0;
+short isShutdown = 0;
 
 
 short queue[NUM_SWITCHES] = {-1,-1,-1,-1,-1,-1};
 short queuec = 0;
 
-
+unsigned int idleLoopCounter = 0;
 
 void setup() {
   // put your setup code here, to run once:
@@ -85,14 +94,19 @@ void setup() {
   
   // Set target motor RPM to 1RPM and microstepping to 1 (full step mode)
   stepper.begin(RPM, MICRO_STEPPING);
-
-  //Serial.begin(9600);
+  pinMode(ENABLE_PIN,OUTPUT);
+  digitalWrite(ENABLE_PIN,LOW);
 
   servos[0]->write(OFF_POS);
+  servos[1]->write(CLOSED_POS);
+  delay(SERVO_DELAY);
+
+  //Serial.begin(9600);
 }
 
 
 int goToHome(){
+  //Serial.println("homing");
   isHomed = 0;
   while(!isHomed){
     if(!digitalRead(ENDSTOP_PIN)){
@@ -106,8 +120,11 @@ int goToHome(){
 
 //goto position (pos) given in absolute coordinates
 int goTo(int pos){
-  if(!isHomed || pos< MIN_POS || pos > MAX_POS)
+  //Serial.println("goTo");
+  if(pos< MIN_POS || pos > MAX_POS)
     return 0;
+  if(!isHomed)
+    goToHome();
 
   int dir = (pos-currentPos)>0?1:-1;
   //check if switch is flipped while moving...
@@ -139,25 +156,20 @@ int qpop(){
 }
 
 int addSwitchesToQueue(){
+  //Serial.println("addToQueue");
   for(int i=0;i<NUM_SWITCHES;++i){
     if(!digitalRead(switchPins[i])){
-      //Serial.println("Pin" + String(i) + " pressed!");
       if(!isInQueue(i)){
-        //Serial.println("push");
         qpush(i);
       }
     }
   }
-  //Serial.println("queuec: " + String(queuec));
-  //if(queuec>0){
-  //  for(int i=0;i<queuec-1;++i)
-  //    Serial.print(String(queue[i]) + ", ");
-  //  Serial.println(queue[queuec-1]);
-  //}
 }
 
 int openDoor(){
+  //Serial.println("open");
   //servo 1 open door
+  servos[1]->write(OPEN_POS);
   delay(SERVO_DELAY);
   //servo0 to standby position
   servos[0]->write(STANDBY_POS);
@@ -167,11 +179,13 @@ int openDoor(){
 }
 
 int closeDoor(){
+  //Serial.println("close");
   //servo0 to off position
   servos[0]->write(OFF_POS);
 
   delay(SERVO_DELAY);
   //servo 1 close door
+  servos[1]->write(CLOSED_POS);
 
   
   delay(SERVO_DELAY);
@@ -180,50 +194,72 @@ int closeDoor(){
 }
 
 int extend(){
+  //Serial.println("extend");
   servos[0]->write(TOP_POS);
   delay(SERVO_DELAY);
 }
 
 int retract(){
+  //Serial.println("retract");
   servos[0]->write(STANDBY_POS);
   delay(SERVO_DELAY);
 }
 
+int activateMotors(){
+  //Serial.println("activateMotors");
+  isShutdown = 0;
+  //attach servos
+  for(int i=0;i<NUM_SERVOS;++i){
+    servos[i]->attach(servoPins[i]);
+  }
+  //close door for safety
+  closeDoor();
+
+  //enable stepper
+  digitalWrite(ENABLE_PIN,LOW);
+}
+int deactivateMotors(){
+  //Serial.println("deactivateMotors");
+  isShutdown=1;
+  if(!isClosed)
+    closeDoor();
+  //detach servos
+  for(int i=0;i<NUM_SERVOS;++i){
+    servos[i]->detach();
+  }
+  isHomed=0;
+  //disable stepper
+  digitalWrite(ENABLE_PIN,HIGH);
+}
+
+
 void loop() {
+  //Serial.println("idle Loop: " + String(idleLoopCounter) +" of " + String(TIME_TO_SHUTDOWN_IN_MS/DELAY_BETWEEN_LOOP_RUNS_IN_MS));
   // put your main code here, to run repeatedly:
-  delay(100);
-    if(!isHomed)
-      goToHome();
-  
+  delay(DELAY_BETWEEN_LOOP_RUNS_IN_MS);
+
+  //check if switches are pressed. if so, goto correct position and extend arm
   addSwitchesToQueue();
   if(queuec){
+    idleLoopCounter = 0; //reset idle loop counter
+    if(isShutdown)  //if motors are turned off, turn them back on
+      activateMotors();
+    goTo(switchesPos[queue[0]]);
     if(isClosed)
       openDoor();
-    goTo(switchesPos[queue[0]]);
     extend();
     retract();
     qpop();
   }
   addSwitchesToQueue();
-
+  //if queue is empty and door is open, close it
   if(!queuec && !isClosed){
     closeDoor();
   }
+  //if door is closed, increment idle loop counter
+  if(isClosed && !(idleLoopCounter >= TIME_TO_SHUTDOWN_IN_MS/DELAY_BETWEEN_LOOP_RUNS_IN_MS))
+    ++idleLoopCounter;
 
-
-
-
-    //delay(3000); 
-    //goTo(-500);
-    //delay(3000); 
-    //goTo(-1070);
-    //delay(2000);   
-    //servos[0]->write(STANDBY_POS);              // tell servo to go to position in variable 'pos'
-    //stepper.rotate(1070/2);
-    //delay(2000);  
-    //servos[0]->write(OFF_POS);              // tell servo to go to position in variable 'pos'
-    //delay(2000);   
-    //servos[0]->write(STANDBY_POS);              // tell servo to go to position in variable 'pos'
-    //delay(2000);  
-    //servos[0]->write(TOP_POS);
+  if(!isShutdown && idleLoopCounter >= TIME_TO_SHUTDOWN_IN_MS/DELAY_BETWEEN_LOOP_RUNS_IN_MS)
+    deactivateMotors(); //turn motors off after idle for more than TIME_TO_SHUTDOWN_IN_MS ms
 }
