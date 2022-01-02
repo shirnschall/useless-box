@@ -17,6 +17,7 @@
 #define STANDBY_POS 90
 #define OFF_POS 140
 
+#define DISASSEMBLING_POS 170
 #define OPEN_POS 75
 #define CLOSED_POS 20
 
@@ -79,30 +80,7 @@ short queuec = 0;
 
 unsigned int idleLoopCounter = 0;
 
-void setup() {
-  // put your setup code here, to run once:
-  // setup switches as digital inputs
-  pinMode(ENDSTOP_PIN, INPUT_PULLUP);
-  for(int i=0;i<NUM_SWITCHES;++i)
-    pinMode(switchPins[i],INPUT_PULLUP);
-
-  //create servo objects and attach pwm pins
-  for(int i=0;i<NUM_SERVOS;++i){
-    servos[i] = new Servo();
-    servos[i]->attach(servoPins[i]);
-  }
-  
-  // Set target motor RPM to 1RPM and microstepping to 1 (full step mode)
-  stepper.begin(RPM, MICRO_STEPPING);
-  pinMode(ENABLE_PIN,OUTPUT);
-  digitalWrite(ENABLE_PIN,LOW);
-
-  servos[0]->write(OFF_POS);
-  servos[1]->write(CLOSED_POS);
-  delay(SERVO_DELAY);
-
-  //Serial.begin(9600);
-}
+short disassemblingMode=1;
 
 
 int goToHome(){
@@ -232,6 +210,53 @@ int deactivateMotors(){
   digitalWrite(ENABLE_PIN,HIGH);
 }
 
+
+void setup() {
+  // put your setup code here, to run once:
+  // setup switches as digital inputs
+  pinMode(ENDSTOP_PIN, INPUT_PULLUP);
+  for(int i=0;i<NUM_SWITCHES;++i)
+    pinMode(switchPins[i],INPUT_PULLUP);
+
+  //create servo objects and attach pwm pins
+  for(int i=0;i<NUM_SERVOS;++i){
+    servos[i] = new Servo();
+    servos[i]->attach(servoPins[i]);
+  }
+  
+  // Set target motor RPM to 1RPM and microstepping to 1 (full step mode)
+  stepper.begin(RPM, MICRO_STEPPING);
+  pinMode(ENABLE_PIN,OUTPUT);
+  digitalWrite(ENABLE_PIN,LOW);
+
+  servos[0]->write(OFF_POS);
+  servos[1]->write(CLOSED_POS);
+  delay(SERVO_DELAY);
+
+  //Serial.begin(9600);
+
+  //if all switches are active on bootup, activate disassembling mode.
+  for(int i=0;i<NUM_SWITCHES;++i){
+    if(digitalRead(switchPins[i])){
+      disassemblingMode=0;
+      break;
+    }
+  }
+  if(disassemblingMode){
+    servos[1]->write(DISASSEMBLING_POS);
+    delay(SERVO_DELAY);
+    //detach servos
+    for(int i=0;i<NUM_SERVOS;++i){
+      servos[i]->detach();
+    }
+    isHomed=0;
+    //disable stepper
+    digitalWrite(ENABLE_PIN,HIGH);
+    while(1){
+      delay(10000);
+    }
+  }
+}
 
 void loop() {
   //Serial.println("idle Loop: " + String(idleLoopCounter) +" of " + String(TIME_TO_SHUTDOWN_IN_MS/DELAY_BETWEEN_LOOP_RUNS_IN_MS));
